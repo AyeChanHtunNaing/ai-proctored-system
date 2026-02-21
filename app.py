@@ -3,17 +3,28 @@ import time
 from pathlib import Path
 from threading import Lock
 
-import av
-import cv2
 import streamlit as st
-from streamlit_webrtc import WebRtcMode, webrtc_streamer
+
+st.set_page_config(page_title="AI Exam Proctor (Columbia + CNN)", layout="wide")
+
+try:
+    import av
+    import cv2
+    from streamlit_webrtc import WebRtcMode, webrtc_streamer
+except Exception as e:
+    st.title("AI-Powered Exam Proctoring (YOLO + Haar + CNN)")
+    st.error("Dependency import failed. Please check Streamlit Cloud build logs.")
+    st.code(str(e))
+    st.info(
+        "Try these pins in requirements.txt: opencv-python-headless==4.8.1.78, "
+        "tensorflow-cpu==2.17.0 and Python 3.10 via runtime.txt/.python-version."
+    )
+    st.stop()
 
 from detectors.face_detect import HaarFaceDetector
 from detectors.gaze_model import GazeClassifier
 from detectors.yolo_person import YoloPersonDetector
 from logic import ProctorState, Thresholds
-
-st.set_page_config(page_title="AI Exam Proctor (Columbia + CNN)", layout="wide")
 
 st.title("AI-Powered Exam Proctoring (YOLO + Haar + CNN)")
 st.caption("Webcam -> YOLO (person count) -> Haar (face ROI) -> CNN (gaze) -> Rule Engine -> Logs")
