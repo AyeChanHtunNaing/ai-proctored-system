@@ -11,7 +11,11 @@ st.set_page_config(page_title="AI Exam Proctor (Columbia + CNN)", layout="wide")
 
 
 def _suppress_known_aioice_teardown_errors() -> None:
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Streamlit's script thread may not have a running loop at import time.
+        return
     default_handler = loop.get_exception_handler()
 
     def _handler(current_loop: asyncio.AbstractEventLoop, context: dict) -> None:
