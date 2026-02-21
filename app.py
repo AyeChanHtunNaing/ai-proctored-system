@@ -88,67 +88,96 @@ runtime = {
     "person_count": 0,
     "last_reason": None,
     "last_status": "OK",
+    "frame_idx": 0,
 }
 
 
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     img = frame.to_ndarray(format="bgr24")
+    try:
+        with runtime["lock"]:
+            runtime["frame_idx"] += 1
+            frame_idx = runtime["frame_idx"]
+            prev_status = runtime["status"]
+            prev_reason = runtime["reason"]
+            prev_seconds = runtime["seconds"]
 
-    person_count, boxes = yolo.count_persons(img)
+        # Keep webcam responsive on Streamlit Cloud by processing every 3rd frame.
+        if frame_idx % 3 != 0:
+            cv2.putText(
+                img,
+                f"{prev_status} | {prev_reason} | {prev_seconds:.1f}s",
+                (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (255, 255, 255),
+                2,
+            )
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    is_focused = True
-    gaze_label, gaze_conf = None, 0.0
-    face_box = None
+        person_count, boxes = yolo.count_persons(img)
 
-    if person_count == 1 and boxes:
-        person_box = boxes[0]
-        face_box = face_det.detect_one(img, within_box_xyxy=person_box)
+        is_focused = True
+        gaze_label, gaze_conf = None, 0.0
+        face_box = None
 
-        x1, y1, x2, y2 = map(int, person_box)
-        cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+        if person_count == 1 and boxes:
+            person_box = boxes[0]
+            face_box = face_det.detect_one(img, within_box_xyxy=person_box)
 
-        if face_box is not None:
-            fx1, fy1, fx2, fy2 = map(int, face_box)
-            cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (0, 255, 0), 2)
+            x1, y1, x2, y2 = map(int, person_box)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
-        if gaze is not None:
-            gaze_label, gaze_conf = gaze.predict(img, face_box_xyxy=face_box, person_box_xyxy=person_box)
-            is_focused = (gaze_label == "focus") if gaze_label is not None else False
+            if face_box is not None:
+                fx1, fy1, fx2, fy2 = map(int, face_box)
+                cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (0, 255, 0), 2)
 
-    status, reason, seconds = state.update(person_count, is_focused)
+            if gaze is not None:
+                gaze_label, gaze_conf = gaze.predict(img, face_box_xyxy=face_box, person_box_xyxy=person_box)
+                is_focused = (gaze_label == "focus") if gaze_label is not None else False
 
-    cv2.putText(img, f"Persons: {person_count}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
-    if gaze_label is not None:
-        cv2.putText(img, f"Gaze: {gaze_label} ({gaze_conf:.2f})", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-    cv2.putText(
-        img,
-        f"{status} | {reason} | {seconds:.1f}s",
-        (10, 84),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.75,
-        (255, 255, 255),
-        2,
-    )
+        status, reason, seconds = state.update(person_count, is_focused)
 
-    with runtime["lock"]:
-        runtime["status"] = status
-        runtime["reason"] = reason
-        runtime["seconds"] = seconds
-        runtime["gaze_label"] = gaze_label
-        runtime["gaze_conf"] = gaze_conf
-        runtime["person_count"] = person_count
+        cv2.putText(img, f"Persons: {person_count}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+        if gaze_label is not None:
+            cv2.putText(img, f"Gaze: {gaze_label} ({gaze_conf:.2f})", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+        cv2.putText(
+            img,
+            f"{status} | {reason} | {seconds:.1f}s",
+            (10, 84),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            (255, 255, 255),
+            2,
+        )
 
-        if status in ("WARNING", "VIOLATION") and (
-            status != runtime["last_status"] or reason != runtime["last_reason"]
-        ):
-            append_log(status, reason, seconds)
-            runtime["last_status"] = status
-            runtime["last_reason"] = reason
-        if status == "OK":
-            runtime["last_status"] = "OK"
-            runtime["last_reason"] = None
+        with runtime["lock"]:
+            runtime["status"] = status
+            runtime["reason"] = reason
+            runtime["seconds"] = seconds
+            runtime["gaze_label"] = gaze_label
+            runtime["gaze_conf"] = gaze_conf
+            runtime["person_count"] = person_count
 
-    return av.VideoFrame.from_ndarray(img, format="bgr24")
+            if status in ("WARNING", "VIOLATION") and (
+                status != runtime["last_status"] or reason != runtime["last_reason"]
+            ):
+                append_log(status, reason, seconds)
+                runtime["last_status"] = status
+                runtime["last_reason"] = reason
+            if status == "OK":
+                runtime["last_status"] = "OK"
+                runtime["last_reason"] = None
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+    except Exception as e:
+        cv2.putText(img, "Frame processing error", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+        cv2.putText(img, str(e)[:90], (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+        with runtime["lock"]:
+            runtime["status"] = "WARNING"
+            runtime["reason"] = f"Frame error: {type(e).__name__}"
+            runtime["seconds"] = 0.0
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
 webrtc_ctx = webrtc_streamer(
