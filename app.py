@@ -1,4 +1,6 @@
 import csv
+import asyncio
+import logging
 import time
 from pathlib import Path
 from threading import Lock
@@ -7,10 +9,38 @@ import streamlit as st
 
 st.set_page_config(page_title="AI Exam Proctor (Columbia + CNN)", layout="wide")
 
+
+def _suppress_known_aioice_teardown_errors() -> None:
+    loop = asyncio.get_event_loop()
+    default_handler = loop.get_exception_handler()
+
+    def _handler(current_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exc = context.get("exception")
+        msg = str(exc) if exc is not None else str(context.get("message", ""))
+        if isinstance(exc, AttributeError) and (
+            "NoneType" in msg and ("sendto" in msg or "call_exception_handler" in msg)
+        ):
+            logging.getLogger("aioice").warning("Suppressed known aioice transport teardown race: %s", msg)
+            return
+
+        if default_handler is not None:
+            default_handler(current_loop, context)
+        else:
+            current_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+
+
+_suppress_known_aioice_teardown_errors()
+
 try:
     import av
     import cv2
     from streamlit_webrtc import WebRtcMode, webrtc_streamer
+    try:
+        from streamlit_webrtc import VideoHTMLAttributes
+    except Exception:
+        VideoHTMLAttributes = None
 except Exception as e:
     st.title("AI-Powered Exam Proctoring (YOLO + Haar + CNN)")
     st.error("Dependency import failed. Please check Streamlit Cloud build logs.")
@@ -184,27 +214,34 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
-webrtc_ctx = webrtc_streamer(
-    key="ai-proctor-monitor",
-    mode=WebRtcMode.SENDRECV,
-    desired_playing_state=True,
-    rtc_configuration={
+webrtc_kwargs = {
+    "key": "ai-proctor-monitor",
+    "mode": WebRtcMode.SENDRECV,
+    "desired_playing_state": True,
+    "rtc_configuration": {
         "iceServers": [
             {"urls": ["stun:stun.l.google.com:19302"]},
             {"urls": ["stun:stun1.l.google.com:19302"]},
         ]
     },
-    media_stream_constraints={
+    "media_stream_constraints": {
         "video": {
             "facingMode": "user",
             "width": {"ideal": 640},
             "height": {"ideal": 480},
+            "frameRate": {"ideal": 15, "max": 24},
         },
         "audio": False,
     },
-    video_frame_callback=video_frame_callback,
-    async_processing=True,
-)
+    # Keep only the latest frame in queue to avoid "video playback" lag on Cloud CPU.
+    "video_receiver_size": 1,
+    "video_frame_callback": video_frame_callback,
+    "async_processing": True,
+}
+if VideoHTMLAttributes is not None:
+    webrtc_kwargs["video_html_attrs"] = VideoHTMLAttributes(autoPlay=True, controls=False, muted=True)
+
+webrtc_ctx = webrtc_streamer(**webrtc_kwargs)
 
 if webrtc_ctx.state.playing:
     while webrtc_ctx.state.playing:
