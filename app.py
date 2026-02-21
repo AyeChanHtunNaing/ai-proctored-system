@@ -73,6 +73,10 @@ def recent_logs(n=8):
 st.markdown("### AI Monitoring Active (Local Processing Only)")
 if gaze is None:
     st.warning("CNN model missing: models/gaze_cnn.h5. Train it after preprocessing Columbia.")
+st.info(
+    "If webcam does not start on Streamlit Cloud: allow browser camera permission, "
+    "then refresh once and click START again."
+)
 
 colA, colB = st.columns([2, 1])
 status_box = colB.empty()
@@ -183,8 +187,21 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
 webrtc_ctx = webrtc_streamer(
     key="ai-proctor-monitor",
     mode=WebRtcMode.SENDRECV,
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    media_stream_constraints={"video": True, "audio": False},
+    desired_playing_state=True,
+    rtc_configuration={
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]},
+            {"urls": ["stun:stun1.l.google.com:19302"]},
+        ]
+    },
+    media_stream_constraints={
+        "video": {
+            "facingMode": "user",
+            "width": {"ideal": 640},
+            "height": {"ideal": 480},
+        },
+        "audio": False,
+    },
     video_frame_callback=video_frame_callback,
     async_processing=True,
 )
@@ -207,6 +224,6 @@ if webrtc_ctx.state.playing:
         logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")
         time.sleep(0.5)
 else:
-    status_box.info("Click START to begin monitoring.")
+    status_box.info("Waiting for webcam permission/start.")
     logs_box.markdown("### Recent Logs")
     logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")

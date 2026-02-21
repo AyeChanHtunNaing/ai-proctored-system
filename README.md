@@ -92,6 +92,13 @@ streamlit run app.py
 
 Open: `http://localhost:8501`
 
+## Streamlit Community Cloud Webcam
+
+- Deploy with this repo as-is (`requirements.txt`, `packages.txt`, and `runtime.txt` are already set).
+- Open the app over `https://` (Streamlit Cloud already does this).
+- Allow camera access in your browser prompt.
+- If webcam is blocked on first try, refresh once and click `START` again.
+
 ## Train the Gaze CNN (Optional)
 
 Use this if you want to retrain `models/gaze_cnn.h5` from your dataset folders:
