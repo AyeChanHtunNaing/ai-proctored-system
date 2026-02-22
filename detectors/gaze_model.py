@@ -18,12 +18,13 @@ class DenseCompat(Dense):
 
 def _load_model_compat(model_path: str):
     try:
-        return load_model(model_path)
+        # compile=False avoids deserialization issues for legacy optimizer/loss configs.
+        return load_model(model_path, compile=False)
     except TypeError as e:
         msg = str(e)
         if "quantization_config" not in msg:
             raise
-        return load_model(model_path, custom_objects={"Dense": DenseCompat})
+        return load_model(model_path, custom_objects={"Dense": DenseCompat}, compile=False)
 
 
 class GazeClassifier:

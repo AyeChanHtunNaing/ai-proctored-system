@@ -84,7 +84,15 @@ face_det = HaarFaceDetector()
 state = ProctorState(Thresholds(absence_warn, absence_violate, away_warn, away_violate))
 
 model_path = Path("models/gaze_cnn.h5")
-gaze = GazeClassifier(str(model_path)) if model_path.exists() else None
+gaze_load_error = None
+if model_path.exists():
+    try:
+        gaze = GazeClassifier(str(model_path))
+    except Exception as e:
+        gaze = None
+        gaze_load_error = f"{type(e).__name__}: {e}"
+else:
+    gaze = None
 
 log_path = Path("logs/violations.csv")
 log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +114,10 @@ def recent_logs(n=8):
 
 st.markdown("### AI Monitoring Active (Local Processing Only)")
 if gaze is None:
-    st.warning("CNN model missing: models/gaze_cnn.h5. Train it after preprocessing Columbia.")
+    if gaze_load_error:
+        st.warning(f"CNN gaze model disabled (load failed): {gaze_load_error[:180]}")
+    else:
+        st.warning("CNN model missing: models/gaze_cnn.h5. Train it after preprocessing Columbia.")
 st.info(
     "If webcam does not start on Streamlit Cloud: allow browser camera permission, "
     "then refresh once and click START again."
