@@ -117,6 +117,7 @@ camera_profile = st.sidebar.selectbox(
     index=0,
     help="Use Compatibility if webcam cannot be read or keeps spinning.",
 )
+auto_start_webcam = st.sidebar.toggle("Auto-start webcam", value=True)
 
 
 face_det = HaarFaceDetector()
@@ -306,8 +307,8 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
 webrtc_kwargs = {
     "key": "ai-proctor-monitor",
     "mode": WebRtcMode.SENDRECV,
-    # Manual start is more reliable than auto-start on some browsers/devices.
-    "desired_playing_state": False,
+    # Auto-start avoids disabled START button issues on some environments.
+    "desired_playing_state": auto_start_webcam,
     "rtc_configuration": {
         "iceServers": [
             {"urls": ["stun:stun.l.google.com:19302"]},
@@ -352,7 +353,10 @@ if webrtc_ctx.state.playing:
     else:
         status_box.error(f"VIOLATION: {reason} ({seconds:.1f}s)")
 else:
-    status_box.info("Click START to begin monitoring.")
+    if auto_start_webcam:
+        status_box.info("Waiting for browser camera permission...")
+    else:
+        status_box.info("Click START to begin monitoring.")
 
 logs_box.markdown("### Recent Logs")
 logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")
