@@ -103,6 +103,11 @@ absence_violate = st.sidebar.number_input("Absence violation", 2.0, 180.0, 20.0,
 away_warn = st.sidebar.number_input("Looking-away warning", 1.0, 60.0, 10.0, 1.0)
 away_violate = st.sidebar.number_input("Looking-away violation", 2.0, 240.0, 30.0, 1.0)
 yolo_conf = st.sidebar.slider("YOLO confidence", 0.10, 0.90, 0.35, 0.05)
+processing_mode = st.sidebar.selectbox(
+    "Processing mode",
+    ["Face-only (for model input)", "Full proctoring (YOLO + gaze)"],
+    index=0,
+)
 
 st.sidebar.markdown("---")
 st.sidebar.info("Ethics: Local processing only. Show 'AI Monitoring Active'.")
@@ -114,18 +119,20 @@ camera_profile = st.sidebar.selectbox(
 )
 
 
-@st.cache_resource
-def load_yolo(conf):
-    return YoloPersonDetector(weights="models/yolov8n.pt", conf=conf)
-
-
-yolo = load_yolo(yolo_conf)
 face_det = HaarFaceDetector()
 state = ProctorState(Thresholds(absence_warn, absence_violate, away_warn, away_violate))
+if processing_mode == "Full proctoring (YOLO + gaze)":
+    @st.cache_resource
+    def load_yolo(conf):
+        return YoloPersonDetector(weights="models/yolov8n.pt", conf=conf)
+
+    yolo = load_yolo(yolo_conf)
+else:
+    yolo = None
 
 model_path = Path("models/gaze_cnn.h5")
 gaze_load_error = None
-if model_path.exists():
+if processing_mode == "Full proctoring (YOLO + gaze)" and model_path.exists():
     try:
         gaze = GazeClassifier(str(model_path))
     except Exception as e:
@@ -153,8 +160,11 @@ def recent_logs(n=8):
 
 
 st.markdown("### AI Monitoring Active (Local Processing Only)")
+st.caption(f"Mode: {processing_mode}")
 if gaze is None:
-    if gaze_load_error:
+    if processing_mode != "Full proctoring (YOLO + gaze)":
+        st.info("Face-only mode is active: webcam + live face boxes, ready for model input.")
+    elif gaze_load_error:
         st.warning(f"CNN gaze model disabled (load failed): {gaze_load_error[:180]}")
     else:
         st.warning("CNN model missing: models/gaze_cnn.h5. Train it after preprocessing Columbia.")
@@ -191,54 +201,72 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
             prev_reason = runtime["reason"]
             prev_seconds = runtime["seconds"]
 
-        # Keep webcam responsive on Streamlit Cloud by processing every 3rd frame.
-        if frame_idx % 3 != 0:
+        if processing_mode == "Face-only (for model input)":
+            face_boxes = face_det.detect_all(img)
+            for fx1, fy1, fx2, fy2 in face_boxes:
+                cv2.rectangle(img, (int(fx1), int(fy1)), (int(fx2), int(fy2)), (0, 255, 0), 2)
+
+            face_count = len(face_boxes)
+            person_count = face_count
+            gaze_label, gaze_conf = None, 0.0
+            if face_count == 0:
+                status, reason, seconds = "WARNING", "No face detected", 0.0
+            elif face_count > 1:
+                status, reason, seconds = "WARNING", "Multiple faces detected", 0.0
+            else:
+                status, reason, seconds = "OK", "Face detected", 0.0
+
+            cv2.putText(img, f"Faces: {face_count}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+            cv2.putText(img, f"{status} | {reason}", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+        else:
+            # Keep webcam responsive on Streamlit Cloud by processing every 3rd frame.
+            if frame_idx % 3 != 0:
+                cv2.putText(
+                    img,
+                    f"{prev_status} | {prev_reason} | {prev_seconds:.1f}s",
+                    (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (255, 255, 255),
+                    2,
+                )
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+            person_count, boxes = yolo.count_persons(img)
+
+            is_focused = True
+            gaze_label, gaze_conf = None, 0.0
+            face_box = None
+
+            if person_count == 1 and boxes:
+                person_box = boxes[0]
+                face_box = face_det.detect_one(img, within_box_xyxy=person_box)
+
+                x1, y1, x2, y2 = map(int, person_box)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+                if face_box is not None:
+                    fx1, fy1, fx2, fy2 = map(int, face_box)
+                    cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (0, 255, 0), 2)
+
+                if gaze is not None:
+                    gaze_label, gaze_conf = gaze.predict(img, face_box_xyxy=face_box, person_box_xyxy=person_box)
+                    is_focused = (gaze_label == "focus") if gaze_label is not None else False
+
+            status, reason, seconds = state.update(person_count, is_focused)
+
+            cv2.putText(img, f"Persons: {person_count}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+            if gaze_label is not None:
+                cv2.putText(img, f"Gaze: {gaze_label} ({gaze_conf:.2f})", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
             cv2.putText(
                 img,
-                f"{prev_status} | {prev_reason} | {prev_seconds:.1f}s",
-                (10, 28),
+                f"{status} | {reason} | {seconds:.1f}s",
+                (10, 84),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.75,
                 (255, 255, 255),
                 2,
             )
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-        person_count, boxes = yolo.count_persons(img)
-
-        is_focused = True
-        gaze_label, gaze_conf = None, 0.0
-        face_box = None
-
-        if person_count == 1 and boxes:
-            person_box = boxes[0]
-            face_box = face_det.detect_one(img, within_box_xyxy=person_box)
-
-            x1, y1, x2, y2 = map(int, person_box)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
-
-            if face_box is not None:
-                fx1, fy1, fx2, fy2 = map(int, face_box)
-                cv2.rectangle(img, (fx1, fy1), (fx2, fy2), (0, 255, 0), 2)
-
-            if gaze is not None:
-                gaze_label, gaze_conf = gaze.predict(img, face_box_xyxy=face_box, person_box_xyxy=person_box)
-                is_focused = (gaze_label == "focus") if gaze_label is not None else False
-
-        status, reason, seconds = state.update(person_count, is_focused)
-
-        cv2.putText(img, f"Persons: {person_count}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
-        if gaze_label is not None:
-            cv2.putText(img, f"Gaze: {gaze_label} ({gaze_conf:.2f})", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-        cv2.putText(
-            img,
-            f"{status} | {reason} | {seconds:.1f}s",
-            (10, 84),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.75,
-            (255, 255, 255),
-            2,
-        )
 
         with runtime["lock"]:
             runtime["status"] = status
@@ -248,13 +276,13 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
             runtime["gaze_conf"] = gaze_conf
             runtime["person_count"] = person_count
 
-            if status in ("WARNING", "VIOLATION") and (
+            if processing_mode == "Full proctoring (YOLO + gaze)" and status in ("WARNING", "VIOLATION") and (
                 status != runtime["last_status"] or reason != runtime["last_reason"]
             ):
                 append_log(status, reason, seconds)
                 runtime["last_status"] = status
                 runtime["last_reason"] = reason
-            if status == "OK":
+            if processing_mode == "Full proctoring (YOLO + gaze)" and status == "OK":
                 runtime["last_status"] = "OK"
                 runtime["last_reason"] = None
 
