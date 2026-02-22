@@ -163,22 +163,6 @@ st.info(
     "then refresh once and click START again."
 )
 
-# Match a normal webcam panel look (centered, medium size) like standard player UI.
-st.markdown(
-    """
-    <style>
-    [data-testid="stAppViewContainer"] video {
-        max-width: 780px !important;
-        width: 100% !important;
-        margin: 0 auto !important;
-        display: block !important;
-        border-radius: 4px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 colA, colB = st.columns([2, 1])
 status_box = colB.empty()
 logs_box = colB.empty()
@@ -305,8 +289,7 @@ webrtc_kwargs = {
     # Keep only the latest frame in queue to avoid "video playback" lag on Cloud CPU.
     "video_receiver_size": 1,
     "video_frame_callback": video_frame_callback,
-    # Sequential processing is slower but more stable on Streamlit Cloud.
-    "async_processing": False,
+    "async_processing": True,
 }
 
 if camera_profile == "Compatibility (recommended)":
@@ -329,23 +312,19 @@ with colA:
     webrtc_ctx = webrtc_streamer(**webrtc_kwargs)
 
 if webrtc_ctx.state.playing:
-    while webrtc_ctx.state.playing:
-        with runtime["lock"]:
-            status = runtime["status"]
-            reason = runtime["reason"]
-            seconds = runtime["seconds"]
+    with runtime["lock"]:
+        status = runtime["status"]
+        reason = runtime["reason"]
+        seconds = runtime["seconds"]
 
-        if status == "OK":
-            status_box.success("OK")
-        elif status == "WARNING":
-            status_box.warning(f"WARNING: {reason} ({seconds:.1f}s)")
-        else:
-            status_box.error(f"VIOLATION: {reason} ({seconds:.1f}s)")
-
-        logs_box.markdown("### Recent Logs")
-        logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")
-        time.sleep(0.5)
+    if status == "OK":
+        status_box.success("OK")
+    elif status == "WARNING":
+        status_box.warning(f"WARNING: {reason} ({seconds:.1f}s)")
+    else:
+        status_box.error(f"VIOLATION: {reason} ({seconds:.1f}s)")
 else:
-    status_box.info("Waiting for webcam permission/start.")
-    logs_box.markdown("### Recent Logs")
-    logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")
+    status_box.info("Click START to begin monitoring.")
+
+logs_box.markdown("### Recent Logs")
+logs_box.code("\n".join(recent_logs()) if recent_logs() else "No logs yet")
