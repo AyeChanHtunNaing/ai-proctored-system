@@ -37,6 +37,40 @@ def _suppress_known_aioice_teardown_errors() -> None:
 
 _suppress_known_aioice_teardown_errors()
 
+
+def _patch_aioice_retry_race() -> None:
+    """
+    Guard aioice's STUN retry callback against a known shutdown race where
+    transport/loop references are already cleared.
+    """
+    try:
+        from aioice import stun as aioice_stun
+    except Exception:
+        return
+
+    retry_name = "_Transaction__retry"
+    original_retry = getattr(aioice_stun.Transaction, retry_name, None)
+    if original_retry is None or getattr(original_retry, "__name__", "") == "_safe_retry":
+        return
+
+    def _safe_retry(self):
+        try:
+            return original_retry(self)
+        except (AttributeError, IndexError) as e:
+            msg = str(e)
+            if (
+                ("NoneType" in msg and ("sendto" in msg or "call_exception_handler" in msg))
+                or ("pop from empty list" in msg)
+            ):
+                logging.getLogger("aioice").warning("Suppressed known aioice retry race: %s", msg)
+                return
+            raise
+
+    setattr(aioice_stun.Transaction, retry_name, _safe_retry)
+
+
+_patch_aioice_retry_race()
+
 try:
     import av
     import cv2
@@ -72,6 +106,12 @@ yolo_conf = st.sidebar.slider("YOLO confidence", 0.10, 0.90, 0.35, 0.05)
 
 st.sidebar.markdown("---")
 st.sidebar.info("Ethics: Local processing only. Show 'AI Monitoring Active'.")
+camera_profile = st.sidebar.selectbox(
+    "Camera profile",
+    ["Compatibility (recommended)", "Balanced"],
+    index=0,
+    help="Use Compatibility if webcam cannot be read or keeps spinning.",
+)
 
 
 @st.cache_resource
@@ -123,6 +163,22 @@ st.info(
     "then refresh once and click START again."
 )
 
+# Match a normal webcam panel look (centered, medium size) like standard player UI.
+st.markdown(
+    """
+    <style>
+    [data-testid="stAppViewContainer"] video {
+        max-width: 780px !important;
+        width: 100% !important;
+        margin: 0 auto !important;
+        display: block !important;
+        border-radius: 4px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 colA, colB = st.columns([2, 1])
 status_box = colB.empty()
 logs_box = colB.empty()
@@ -142,8 +198,8 @@ runtime = {
 
 
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-    img = frame.to_ndarray(format="bgr24")
     try:
+        img = frame.to_ndarray(format="bgr24")
         with runtime["lock"]:
             runtime["frame_idx"] += 1
             frame_idx = runtime["frame_idx"]
@@ -220,26 +276,44 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
     except Exception as e:
-        cv2.putText(img, "Frame processing error", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
-        cv2.putText(img, str(e)[:90], (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+        # Never drop the outgoing stream frame; return original frame when processing fails.
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            cv2.putText(img, "Frame processing error", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+            cv2.putText(img, str(e)[:90], (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+            out = av.VideoFrame.from_ndarray(img, format="bgr24")
+        except Exception:
+            out = frame
         with runtime["lock"]:
             runtime["status"] = "WARNING"
             runtime["reason"] = f"Frame error: {type(e).__name__}"
             runtime["seconds"] = 0.0
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+        return out
 
 
 webrtc_kwargs = {
     "key": "ai-proctor-monitor",
     "mode": WebRtcMode.SENDRECV,
-    "desired_playing_state": True,
+    # Manual start is more reliable than auto-start on some browsers/devices.
+    "desired_playing_state": False,
     "rtc_configuration": {
         "iceServers": [
             {"urls": ["stun:stun.l.google.com:19302"]},
             {"urls": ["stun:stun1.l.google.com:19302"]},
         ]
     },
-    "media_stream_constraints": {
+    # Keep only the latest frame in queue to avoid "video playback" lag on Cloud CPU.
+    "video_receiver_size": 1,
+    "video_frame_callback": video_frame_callback,
+    # Sequential processing is slower but more stable on Streamlit Cloud.
+    "async_processing": False,
+}
+
+if camera_profile == "Compatibility (recommended)":
+    # Relaxed constraints: best chance to open webcam across browsers.
+    webrtc_kwargs["media_stream_constraints"] = {"video": True, "audio": False}
+else:
+    webrtc_kwargs["media_stream_constraints"] = {
         "video": {
             "facingMode": "user",
             "width": {"ideal": 640},
@@ -247,16 +321,12 @@ webrtc_kwargs = {
             "frameRate": {"ideal": 15, "max": 24},
         },
         "audio": False,
-    },
-    # Keep only the latest frame in queue to avoid "video playback" lag on Cloud CPU.
-    "video_receiver_size": 1,
-    "video_frame_callback": video_frame_callback,
-    "async_processing": True,
-}
+    }
 if VideoHTMLAttributes is not None:
-    webrtc_kwargs["video_html_attrs"] = VideoHTMLAttributes(autoPlay=True, controls=False, muted=True)
+    webrtc_kwargs["video_html_attrs"] = VideoHTMLAttributes(autoPlay=True, controls=True, muted=True)
 
-webrtc_ctx = webrtc_streamer(**webrtc_kwargs)
+with colA:
+    webrtc_ctx = webrtc_streamer(**webrtc_kwargs)
 
 if webrtc_ctx.state.playing:
     while webrtc_ctx.state.playing:

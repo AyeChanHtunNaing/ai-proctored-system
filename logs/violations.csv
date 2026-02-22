@@ -7,3 +7,15 @@ timestamp,status,reason,seconds
 2026-02-21 22:39:56,VIOLATION,Multiple people detected,0.00
 2026-02-21 22:39:56,VIOLATION,Multiple people detected,0.00
 2026-02-21 22:40:01,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:25,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:27,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:37,WARNING,Looking away,10.01
+2026-02-22 08:23:47,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:47,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:48,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:49,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:50,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:52,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:52,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:53,VIOLATION,Multiple people detected,0.00
+2026-02-22 08:23:55,VIOLATION,Multiple people detected,0.00
