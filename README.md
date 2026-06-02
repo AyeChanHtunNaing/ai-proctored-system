@@ -1,5 +1,7 @@
 # AI-Powered Automated Exam Proctoring System
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-proctored-system.streamlit.app)
+
 Real-time local exam monitoring using:
 
 - YOLOv8 for person detection
@@ -94,7 +96,7 @@ Open: `http://localhost:8501`
 
 ## Streamlit Community Cloud Webcam
 
-- Deploy with this repo as-is (`requirements.txt`, `packages.txt`, and `runtime.txt` are already set).
+- **Live Deployment:** [ai-proctored-system.streamlit.app](https://ai-proctored-system.streamlit.app)
 - Open the app over `https://` (Streamlit Cloud already does this).
 - Allow camera access in your browser prompt.
 - If webcam is blocked on first try, refresh once and click `START` again.
