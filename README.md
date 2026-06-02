@@ -1,6 +1,5 @@
 # AI-Powered Automated Exam Proctoring System
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-proctored-system.streamlit.app)
 
 Real-time local exam monitoring using:
 
