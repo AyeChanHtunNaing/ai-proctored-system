@@ -5,7 +5,7 @@ class HaarFaceDetector:
     """Fast offline face detector using OpenCV Haar cascades."""
 
     def __init__(self, scaleFactor: float = 1.1, minNeighbors: int = 7, minSize=(60, 60)):
-        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml"
         self.detector = cv2.CascadeClassifier(cascade_path)
         self.scaleFactor = scaleFactor
         self.minNeighbors = minNeighbors
@@ -113,4 +113,18 @@ class HaarFaceDetector:
             boxes.append((ox + int(x), oy + int(y), ox + int(x + w), oy + int(y + h)))
             
         # Apply NMS to suppress duplicate detections of the same face
-        return self._nms(boxes, threshold=0.35)
+        nms_boxes = self._nms(boxes, threshold=0.35)
+        if len(nms_boxes) <= 1:
+            return nms_boxes
+
+        # Discard background noise face candidates that are too small
+        # compared to the largest detected face box in the frame
+        areas = [(b[2]-b[0]) * (b[3]-b[1]) for b in nms_boxes]
+        max_area = max(areas)
+        
+        filtered_boxes = []
+        for b, area in zip(nms_boxes, areas):
+            if area >= 0.50 * max_area:
+                filtered_boxes.append(b)
+                
+        return filtered_boxes
